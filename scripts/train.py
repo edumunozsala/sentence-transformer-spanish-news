@@ -5,7 +5,7 @@ import os
 import sys
 from unicodedata import name
 
-from datasets import load_from_disk
+from datasets import load_from_disk, load_dataset
 from transformers import AutoTokenizer
 from sentence_transformers import InputExample, SentenceTransformer, models, losses
 from torch.utils.data import DataLoader
@@ -33,7 +33,24 @@ def load_and_prepare_dataset(
 
     return examples
 
+def convert_dataset(dataset):
+    dataset_samples=[]
+    for df in dataset:
+        score = float(df['similarity_score'])/5.0  # Normalize score to range 0 ... 1
+        inp_example = InputExample(texts=[df['sentence1'], 
+                                    df['sentence2']], label=score)
+        dataset_samples.append(inp_example)
+    return dataset_samples
 
+def load_and_prepare_evaluator(dataset_path, dataset_name, split, eval_name):
+    # Loading the dataset for evaluation
+    df = load_dataset(dataset_path, name=dataset_name, split=split)
+    # Convert the dataset for evaluation
+    # For Dev set:
+    samples = convert_dataset(df)
+    evaluator = EmbeddingSimilarityEvaluator.from_input_examples(samples, name=eval_name)
+
+    return evaluator
 
 def train(args):
 
@@ -42,10 +59,10 @@ def train(args):
     logger.info("Loading datasets...\n")
     train_examples = load_and_prepare_dataset(args.train_data_dir,args.text_column,
         args.target_column, args.num_examples)
-    validation_examples = load_and_prepare_dataset(args.val_data_dir,args.text_column,
-        args.target_column, args.num_examples)
-    test_examples = load_and_prepare_dataset(args.test_data_dir,args.text_column,
-        args.target_column, args.num_examples)
+    #alidation_examples = load_and_prepare_dataset(args.val_data_dir,args.text_column,
+    #   args.target_column, args.num_examples)
+    #est_examples = load_and_prepare_dataset(args.test_data_dir,args.text_column,
+    #   args.target_column, args.num_examples)
 
     logger.info("Defining the model\n")
     ## Step 1: use an existing language model
@@ -69,7 +86,9 @@ def train(args):
     train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=args.train_batch_size)
 
     logger.info("Creating the Evaluator")
-    evaluator = EmbeddingSimilarityEvaluator.from_input_examples(validation_examples, name='sts-dev')
+    #Create the validation evaluator
+    evaluator = load_and_prepare_evaluator("stsb_multi_mt", "es", "dev", "sts-dev")    
+    #valuator = EmbeddingSimilarityEvaluator.from_input_examples(validation_examples, name='sts-dev')
 
     # Set logging steps when strategy= steps
     logger.info("Defining some training parameters\n")
@@ -86,12 +105,17 @@ def train(args):
     
     logger.info("Model trained successfully")
     logger.info("Evaluate the model on the test dataset")
-    test_evaluator = EmbeddingSimilarityEvaluator.from_input_examples(test_examples, name='sts-test')
-    test_evaluator(model, output_path=args.model_dir)
+    #Create the validation evaluator
+    test_evaluator = load_and_prepare_evaluator("stsb_multi_mt", "es", "test", "sts-test")
+    test_evaluator(model, output_path=args.model_dir)    
+    
+    #est_evaluator = EmbeddingSimilarityEvaluator.from_input_examples(test_examples, name='sts-test')
+    #est_evaluator(model, output_path=args.model_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-name", type=str, default="bertin-project/bertin-roberta-base-spanish")
+    # Model "bertin-project/bertin-roberta-base-spanish"
+    parser.add_argument("--model-name", type=str, required=True)
     parser.add_argument(
         "--train-data-dir", type=str, default=os.environ["SM_CHANNEL_TRAIN"]
     )
@@ -104,16 +128,16 @@ if __name__ == "__main__":
 
     parser.add_argument("--text-column", type=str, default="text")
     parser.add_argument("--target-column", type=str, default="output_text")
-    parser.add_argument("--max-source", type=int, default=256)
-    parser.add_argument("--max-target", type=int, default=32)
+    #parser.add_argument("--max-source", type=int, default=256)
+    #parser.add_argument("--max-target", type=int, default=32)
     parser.add_argument("--num-examples", type=int, default=0)
     parser.add_argument("--model-dir", type=str, default=os.environ["SM_MODEL_DIR"])
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--train-batch-size", type=int, default=8)
     #parser.add_argument("--warmup-steps", type=float, default=50)
     #parser.add_argument("--lr", type=float, default=2e-5)
     #parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--trained-model-name", type=str)    
+    parser.add_argument("--trained-model-name", type=str, required=True)    
     #parser.add_argument("--log-dir", type=str, default=os.environ["SM_OUTPUT_DIR"])
     #parser.add_argument("--logging-strategy", type=str, default="epoch")
     train(parser.parse_args())
